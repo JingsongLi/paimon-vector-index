@@ -53,6 +53,19 @@ neighbor ordering as cosine distance. Published neighbor IDs are copied
 unchanged. Conversion fails if a vector is zero-length or has a non-finite
 norm.
 
+## Lance IVF-SQ comparison
+
+`benchmark_lance_ivfsq.py` benchmarks Lance 11+ against the same converted
+`fvecs`/`ivecs` as `ann_bench`. It requires `pylance`, `numpy`, and `pyarrow`.
+It creates a fresh dataset/index per repetition, warms selected partitions,
+tests both default and partition-parallel query scheduling, and emits JSONL
+with build time, file size, recall, P50/P95, and sequential/batch throughput.
+`benchmark_ivfsq_reader.py` measures the matching public Paimon Python reader
+and accepts a zero memory budget to isolate uncached performance.
+Raw dataset writing is reported separately from index construction. See
+[the IVF-SQ performance report](../docs/ivf-sq-performance.md) for commands,
+measured results, and the differences between the public API entry points.
+
 ## Java staging deploy
 
 `deploy_java_staging.sh` deploys the Java release candidate artifacts to Apache
