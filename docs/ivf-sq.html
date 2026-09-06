@@ -67,18 +67,15 @@ let params = VectorSearchParams::new(10, 16);</code></pre></div>
         </section>
         <section class="article-section" id="benchmarks">
           <h2>Public benchmarks</h2>
-          <h3>September 2026: IVF-SQ versus Lance 11.0.0</h3>
-          <p>Three-run medians on Apple M4 Pro (12 CPU cores, 48 GiB RAM), with eight workers, <code>nlist=1024</code>, <code>nprobe=64</code>, <code>k=10</code>, 65,536 training rows, and 1,000 held-out public queries. Both engines read the same vectors; GloVe is normalized before either engine loads it. Query measurements use the public Python interfaces with selected partitions warmed and no raw-vector refinement.</p>
-          <div class="table-wrap"><table><thead><tr><th>Corpus</th><th>Engine</th><th>Index build</th><th>Python P95</th><th>Python batch QPS</th><th>Recall@10</th></tr></thead><tbody>
-          <tr><td>SIFT1M</td><td>Paimon IVF-SQ</td><td>0.886 s</td><td>0.260 ms</td><td>9,927</td><td>0.9812</td></tr>
-          <tr><td>SIFT1M</td><td>Lance 11.0.0</td><td>3.613 s</td><td>1.099 ms</td><td>4,181</td><td>0.9772–0.9775</td></tr>
-          <tr><td>GIST1M</td><td>Paimon IVF-SQ</td><td>5.850 s</td><td>1.769 ms</td><td>986</td><td>0.9399</td></tr>
-          <tr><td>GIST1M</td><td>Lance 11.0.0</td><td>18.651 s</td><td>1.862 ms</td><td>1,334</td><td>0.9249</td></tr>
-          <tr><td>GloVe-100</td><td>Paimon IVF-SQ</td><td>0.797 s</td><td>0.240 ms</td><td>11,052</td><td>0.8760</td></tr>
-          <tr><td>GloVe-100</td><td>Lance 11.0.0</td><td>2.790 s</td><td>1.089 ms</td><td>4,240</td><td>0.7843–0.7845</td></tr>
-        </tbody></table></div>
-          <p>In SIFT / GIST / GloVe order, Paimon builds 4.08× / 3.19× / 3.50× as fast, lowers median Python P95 by 76% / 5% / 78%, and delivers 2.37× / 0.74× / 2.61× Lance's batch throughput. Build time includes training, encoding, and serialization; Lance source-dataset writing is excluded. Lance uses its faster scheduling mode for each metric: partition parallelism 8 for P95 and 0 for batch QPS; recall ranges cover both modes.</p>
-          <p>Paimon's reader budget is 4 GiB and Lance's index-cache budget is 1 GiB; each measured index fits both. Both engines use native training defaults with the same sample count. GIST batch throughput remains about 26% below Lance, and its three-run P95 ranges overlap despite the 5% lower median. These results do not establish performance on cold storage, object stores, or other architectures and distributions. Pooled bounds can lose resolution on extreme-outlier data. See the <a href="ivf-sq-performance.md">full report and verification</a>, <a href="benchmarks/ivfsq-lance-20260906.json">raw measurements</a>, and <a href="development.html#ivfsq-lance">reproduction guide</a>.</p>
+          <h3>September 2026: optimization results</h3>
+          <p>Three-run native <code>ann_bench</code> medians on Apple M4 Pro (12 CPU cores, 48 GiB RAM), with Rust 1.95 release builds, eight workers, <code>nlist=1024</code>, <code>nprobe=64</code>, <code>k=10</code>, 65,536 training rows, and 1,000 held-out public queries. Baseline commit <code>8dcabf2</code> and the current implementation use the same input files and settings; GloVe is L2-normalized.</p>
+          <p>Values show baseline → current. Build time includes training, encoding, and serialization. Sequential queries can reuse earlier partitions with the current 4 GiB reader budget; batch timing uses a separate fresh reader and includes payload reads and cache insertion. The baseline reader does not cache SQ partitions.</p>
+          <div class="table-wrap"><table><thead><tr><th>Corpus</th><th>Index build (ms)</th><th>Query P95 (µs)</th><th>Batch QPS</th><th>Recall@10</th></tr></thead><tbody>
+          <tr><td>SIFT1M</td><td>934 → 886</td><td>840 → 298</td><td>6,417 → 8,987</td><td>0.8626 → 0.9811</td></tr>
+          <tr><td>GIST1M</td><td>6,404 → 5,850</td><td>4,386 → 1,828</td><td>899 → 998</td><td>0.8576 → 0.9400</td></tr>
+          <tr><td>GloVe-100</td><td>849 → 797</td><td>739 → 282</td><td>6,988 → 10,009</td><td>0.8036 → 0.8760</td></tr>
+          </tbody></table></div>
+          <p>File sizes are unchanged. These warm local-filesystem measurements do not establish performance on cold storage, object stores, or other architectures and distributions. Pooled bounds can lose resolution on extreme-outlier data. See the <a href="development.html#ivfsq-bench">reproduction guide</a> and the <a href="index.html#build-results">current build and local-search tables</a>.</p>
           <h3 id="historical-benchmarks">Historical uncached implementation</h3>
           <p>The following measurements predate pooled bounds and partition caching. They use <code>nlist=1024</code>, <code>nprobe=64</code>, <code>k=10</code>, and 12 Rayon workers on Apple M4 Pro. Keep them separate from the current eight-worker comparison above, which now includes a GIST rerun.</p>
           <div class="table-wrap"><table><thead><tr><th>Dataset</th><th>Recall@10</th><th>Build / peak RSS</th><th>Warm P95 / batch QPS</th><th>Read/query</th></tr></thead><tbody><tr><td>SIFT1M</td><td>0.8627</td><td>3.93 s / 0.79 GiB</td><td>0.79 ms / 11,082</td><td>8.38 MiB</td></tr><tr><td>GIST1M</td><td>0.8577</td><td>22.7 s / 5.09 GiB</td><td>3.56 ms / 1,502</td><td>70.95 MiB</td></tr><tr><td>GloVe-100</td><td>0.8036</td><td>3.86 s / 0.71 GiB</td><td>0.71 ms / 12,962</td><td>6.99 MiB</td></tr></tbody></table></div>

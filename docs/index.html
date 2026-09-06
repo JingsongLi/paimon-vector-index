@@ -117,36 +117,16 @@
         </div>
       </section>
 
-      <section class="section" id="ivfsq-lance">
-        <div class="section-heading">
-          <h2>6 September 2026: IVF-SQ versus Lance</h2>
-          <p>Three-run medians on public SIFT1M, GIST1M, and GloVe-100: Apple M4 Pro, eight workers, 1,024 partitions, 64 probes, Top-10, 65,536 training rows, and 1,000 held-out queries. Both engines use the same input files and native training defaults; GloVe is normalized before either engine reads it.</p>
-        </div>
-        <div class="table-wrap"><table><thead><tr><th>Corpus</th><th>Engine</th><th>Index build</th><th>Python P95</th><th>Python batch QPS</th><th>Recall@10</th></tr></thead><tbody>
-          <tr><td>SIFT1M</td><td>Paimon IVF-SQ</td><td>0.886 s</td><td>0.260 ms</td><td>9,927</td><td>0.9812</td></tr>
-          <tr><td>SIFT1M</td><td>Lance 11.0.0</td><td>3.613 s</td><td>1.099 ms</td><td>4,181</td><td>0.9772–0.9775</td></tr>
-          <tr><td>GIST1M</td><td>Paimon IVF-SQ</td><td>5.850 s</td><td>1.769 ms</td><td>986</td><td>0.9399</td></tr>
-          <tr><td>GIST1M</td><td>Lance 11.0.0</td><td>18.651 s</td><td>1.862 ms</td><td>1,334</td><td>0.9249</td></tr>
-          <tr><td>GloVe-100</td><td>Paimon IVF-SQ</td><td>0.797 s</td><td>0.240 ms</td><td>11,052</td><td>0.8760</td></tr>
-          <tr><td>GloVe-100</td><td>Lance 11.0.0</td><td>2.790 s</td><td>1.089 ms</td><td>4,240</td><td>0.7843–0.7845</td></tr>
-        </tbody></table></div>
-        <p>Build includes training through index serialization and excludes Lance source-dataset writing. Queries use both public Python interfaces after warming selected partitions, with no raw-vector refinement. Cache budgets are 4 GiB for Paimon and 1 GiB for Lance; each measured index fits both.</p>
-        <p>Relative to Lance, SIFT1M: 4.08× build speed, 76% lower Python P95, 2.37× batch throughput; GIST1M: 3.19× build speed, 5% lower Python P95, 0.74× batch throughput; GloVe-100: 3.50× build speed, 78% lower Python P95, 2.61× batch throughput.</p>
-        <div class="callout warning"><strong>GIST batch throughput still trails Lance</strong>IVF-SQ reaches 986 QPS versus Lance's 1,334 QPS, about 26% lower, despite its faster build and higher recall. Its median Python P95 is only 5% lower, and the three-run latency ranges overlap. These results do not establish an across-the-board performance lead.</div>
-        <p>Lance uses its faster scheduling mode separately for each metric: SIFT1M P95 / batch parallelism 8 / 0; GIST1M P95 / batch parallelism 8 / 0; GloVe-100 P95 / batch parallelism 8 / 0. Recall ranges show the two scheduling-mode medians. These measurements do not cover cold storage, object stores, or other architectures.</p>
-        <p>See the <a href="ivf-sq-performance.md">full report</a>, <a href="development.html#ivfsq-lance">reproduction commands</a>, and <a href="benchmarks/ivfsq-lance-20260906.json">all recorded runs</a>. The native build and local-storage tables below also contain the refreshed IVF-SQ results.</p>
-      </section>
-
       <section class="section" id="public-corpus-check">
         <div class="section-heading">
           <h2>Public-corpus benchmark results</h2>
           <p><strong>IVF-SQ was refreshed on 6 September 2026 across all three corpora.</strong> Its build and local-search cells below use three-run native <code>ann_bench</code> medians with eight Rayon workers. The other four index rows retain their July 2026 measurements with 12 workers; these tables record the latest available results for each index, not a new simultaneous five-index ranking.</p>
-          <p>All rows use the same public corpus shapes, 1,000 independent queries, <code>nlist=1024</code>, <code>nprobe=64</code>, and Top-10. Native batch timing includes the first payload reads and cache insertion on a fresh reader, so it differs from the warmed Python comparison above. The remote-model results remain archived separately below.</p>
+          <p>All rows use the same public corpus shapes, 1,000 independent queries, <code>nlist=1024</code>, <code>nprobe=64</code>, and Top-10. Native batch timing includes the first payload reads and cache insertion on a fresh reader. The remote-model results remain archived separately below.</p>
         </div>
 
         <details id="benchmark-setup">
           <summary><strong>Historical five-index setup and reproduction parameters · July 2026</strong></summary>
-          <p>The following records the original 12-worker comparison. For the refreshed eight-worker IVF-SQ configuration, use the <a href="development.html#ivfsq-lance">current reproduction guide</a>.</p>
+          <p>The following records the original 12-worker comparison. For the refreshed eight-worker IVF-SQ configuration, use the <a href="development.html#ivfsq-bench">current reproduction guide</a>.</p>
         <h3>Benchmark setup</h3>
         <div class="callout warning"><strong>This is not the zero-configuration benchmark</strong>Running <code>cargo bench -p paimon-vindex-core --bench ann_bench</code> without public file paths uses a 20k-vector, 64-dimensional generated smoke workload. Reproducing the results below requires the public files, recorded IVF and DiskANN search settings, a fixed worker count, and an output directory on the storage device being measured. File shape, training count, and multi-index process isolation are automatic.</div>
         <p>The real-data run uses the public <a href="https://github.com/erikbern/ann-benchmarks">ANN-Benchmarks</a> SIFT1M, GIST1M, and GloVe-100 files, the first 1,000 independent test queries, and their published Top-100 exact neighbors. Recall@10 compares only the first ten published neighbors. SIFT and GIST contain one million base vectors with 128 and 960 dimensions. GloVe contains 1,183,514 vectors with 100 dimensions and angular ground truth; its base and query vectors are L2-normalized during conversion so the common L2 benchmark produces the same neighbor ordering as cosine. The benchmark supplies 65,536 base vectors to every trainer; DiskANN bounds PQ training memory with a deterministic reservoir of at most 50,000 vectors.</p>
@@ -183,7 +163,7 @@
           <tr><td>IVF-FLAT</td><td>0.9937 / 1.88 ms / 8,510 / 33.19 MiB</td><td>0.9549 / 11.38 ms / 875 / 283.40 MiB</td><td>0.8832 / 1.40 ms / 9,502 / 27.57 MiB</td></tr>
         </tbody></table></div>
         <p>The refreshed SQ reader reuses decoded partitions within its memory budget. The read column is average payload I/O per sequential query, including cache misses while that sweep warms the reader; it is not the full selected-list size or a cold-cache promise. SQ batch QPS includes the first batch's payload reads on a separate reader. The recorded July rows predate this SQ cache and training change.</p>
-        <p>For IVF-SQ, train / encode-add / serialize medians in SIFT / GIST / GloVe order are 252 / 538 / 93 ms; 1696 / 3613 / 563 ms; 187 / 517 / 90 ms. Stage medians are computed independently and need not sum to the median total. See the <a href="ivf-sq-performance.md">same-configuration baseline comparison</a> for the optimization's measured effect.</p>
+        <p>For IVF-SQ, train / encode-add / serialize medians in SIFT / GIST / GloVe order are 252 / 538 / 93 ms; 1696 / 3613 / 563 ms; 187 / 517 / 90 ms. Stage medians are computed independently and need not sum to the median total. See the <a href="ivf-sq.html#benchmarks">same-configuration baseline comparison</a> for the optimization's measured effect.</p>
 
         <details id="historical-implementation-notes">
           <summary><strong>Historical implementation notes and earlier SQ scores · July 2026</strong></summary>
