@@ -182,38 +182,22 @@ pub struct IVFSQIndexReader<R: SeekRead> {
 }
 
 impl<R: SeekRead> IVFSQIndexReader<R> {
+    pub fn open(reader: R) -> io::Result<Self> {
+        Self::open_with_options(reader, VectorIndexReaderOptions::new(0))
+    }
+
     /// Open with a bounded cache of decoded partitions. `open` retains the
     /// uncached positional-I/O behavior for callers that manage their own cache.
-    pub fn open_with_options(reader: R, options: VectorIndexReaderOptions) -> io::Result<Self> {
-        let mut index = Self::open(reader)?;
-        index.configure_cache(options.memory_budget_bytes);
-        Ok(index)
-    }
-
-    pub(crate) fn configure_cache(&mut self, memory_budget_bytes: usize) {
-        let resident = size_of::<Self>()
-            + self.quantizer_centroids.capacity() * size_of::<f32>()
-            + self.list_offsets.capacity() * size_of::<i64>()
-            + self.list_counts.capacity() * size_of::<i32>()
-            + self.list_id_bytes_lens.capacity() * size_of::<i32>()
-            + self.list_sqs.capacity() * size_of::<ScalarQuantizer>()
-            + std::iter::once(&self.sq)
-                .chain(&self.list_sqs)
-                .map(|sq| (sq.mins.capacity() + sq.maxs.capacity()) * size_of::<f32>())
-                .sum::<usize>();
-        self.list_cache =
-            SqListCache::new(self.nlist, memory_budget_bytes.saturating_sub(resident));
-    }
-
-    pub fn open(mut reader: R) -> io::Result<Self> {
+    pub fn open_with_options(mut reader: R, options: VectorIndexReaderOptions) -> io::Result<Self> {
         let mut header = [0u8; IVF_SQ_HEADER_SIZE];
         reader.pread(&mut [ReadRequest::new(0, &mut header)])?;
-        Self::open_with_header(reader, header)
+        Self::open_with_header_and_options(reader, header, options)
     }
 
-    pub(crate) fn open_with_header(
+    pub(crate) fn open_with_header_and_options(
         mut reader: R,
         header: [u8; IVF_SQ_HEADER_SIZE],
+        options: VectorIndexReaderOptions,
     ) -> io::Result<Self> {
         let read_u32 =
             |offset: usize| u32::from_le_bytes(header[offset..offset + 4].try_into().unwrap());
@@ -389,6 +373,19 @@ impl<R: SeekRead> IVFSQIndexReader<R> {
             ));
         }
 
+        let resident = size_of::<Self>()
+            + quantizer_centroids.capacity() * size_of::<f32>()
+            + list_offsets.capacity() * size_of::<i64>()
+            + list_counts.capacity() * size_of::<i32>()
+            + list_id_bytes_lens.capacity() * size_of::<i32>()
+            + list_sqs.capacity() * size_of::<ScalarQuantizer>()
+            + std::iter::once(&sq)
+                .chain(&list_sqs)
+                .map(|sq| (sq.mins.capacity() + sq.maxs.capacity()) * size_of::<f32>())
+                .sum::<usize>();
+        let list_cache =
+            SqListCache::new(nlist, options.memory_budget_bytes.saturating_sub(resident));
+
         Ok(Self {
             reader,
             d,
@@ -402,7 +399,7 @@ impl<R: SeekRead> IVFSQIndexReader<R> {
             list_counts,
             list_id_bytes_lens,
             loaded: true,
-            list_cache: None,
+            list_cache,
         })
     }
 
@@ -1633,20 +1630,64 @@ mod tests {
     }
 
     #[test]
-    fn ivfsq_open_coalesces_resident_metadata() {
-        let (index, _, _) = build_index(8, 32, 512);
-        let calls = Arc::new(AtomicUsize::new(0));
-        let source = CountingReader {
-            inner: Cursor::new(serialized_index(&index)),
-            calls: Arc::clone(&calls),
-        };
-        let mut reader = IVFSQIndexReader::open(source).unwrap();
-        reader.optimize_for_search().unwrap();
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "direct IVF-SQ open should use one header read and one resident-metadata read"
-        );
+    fn ivfsq_reader_entry_points_preserve_cache_policy_and_header_reads() {
+        use crate::index::VectorIndexReader;
+
+        let (index, data, _) = build_index(8, 8, 512);
+        let bytes = serialized_index(&index);
+        let query = &data[..8];
+        let expected = IVFSQIndexReader::open(Cursor::new(bytes.clone()))
+            .unwrap()
+            .search(query, 5, 8)
+            .unwrap();
+        for (unified, budget, cached) in [
+            (false, None, false),
+            (false, Some(0), false),
+            (false, Some(1), false),
+            (false, Some(1024 * 1024), true),
+            (true, None, true),
+            (true, Some(0), false),
+            (true, Some(1), false),
+            (true, Some(1024 * 1024), true),
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let source = CountingReader {
+                inner: Cursor::new(bytes.clone()),
+                calls: Arc::clone(&calls),
+            };
+            let options = budget.map(VectorIndexReaderOptions::new);
+            let mut reader = if unified {
+                let reader = match options {
+                    Some(options) => VectorIndexReader::open_with_options(source, options),
+                    None => VectorIndexReader::open(source),
+                }
+                .unwrap();
+                let VectorIndexReader::IvfSq(reader) = reader else {
+                    panic!("SQ file must dispatch to the SQ reader");
+                };
+                reader
+            } else {
+                match options {
+                    Some(options) => IVFSQIndexReader::open_with_options(source, options),
+                    None => IVFSQIndexReader::open(source),
+                }
+                .unwrap()
+            };
+            reader.optimize_for_search().unwrap();
+            assert_eq!(
+                calls.swap(0, Ordering::Relaxed),
+                2,
+                "open should read the header and resident metadata exactly once"
+            );
+            assert_eq!(reader.search(query, 5, 8).unwrap(), expected);
+            assert_eq!(calls.swap(0, Ordering::Relaxed), 1);
+            assert_eq!(reader.search(query, 5, 8).unwrap(), expected);
+            assert_eq!(
+                calls.load(Ordering::Relaxed),
+                usize::from(!cached),
+                "cache policy for unified={unified}, budget={budget:?}"
+            );
+        }
     }
 
     #[test]

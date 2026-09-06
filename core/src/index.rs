@@ -1464,11 +1464,9 @@ impl<R: SeekRead> VectorIndexReader<R> {
             IVFFLAT_MAGIC => Ok(Self::IvfFlat(IVFFlatIndexReader::open_with_header(
                 reader, header,
             )?)),
-            IVF_SQ_MAGIC => {
-                let mut reader = IVFSQIndexReader::open_with_header(reader, header)?;
-                reader.configure_cache(options.memory_budget_bytes);
-                Ok(Self::IvfSq(reader))
-            }
+            IVF_SQ_MAGIC => Ok(Self::IvfSq(IVFSQIndexReader::open_with_header_and_options(
+                reader, header, options,
+            )?)),
             MAGIC => Ok(Self::IvfPq(IVFPQIndexReader::open_with_header(
                 reader, header,
             )?)),
